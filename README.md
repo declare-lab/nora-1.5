@@ -2,7 +2,7 @@
 
 [![Project Website](https://img.shields.io/badge/Project-Website-blue.svg)](https://declare-lab.github.io/nora-1.5)
 [![Model](https://img.shields.io/badge/Model-NORA--1.5-brightgreen)](https://huggingface.co/declare-lab/nora-1.5)
-[![arXiv](https://img.shields.io/badge/arXiv-NORA-b31b1b.svg)](https://arxiv.org/abs/2511.14659)
+[![arXiv](https://img.shields.io/badge/arXiv-2511.14659-b31b1b.svg)](https://arxiv.org/abs/2511.14659)
 ![Status](https://img.shields.io/badge/Status-Active-orange)
 
 NORA-1.5 is a **Vision-Language-Action (VLA)** model that improves generalization and real-world decision making through **post-training with world-model-based and action-based preference rewards**.  
