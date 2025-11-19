@@ -1,4 +1,4 @@
-# NORA-1.5: A Vision–Language–Action Model Post-Trained With World-Model and Action-Based Preference Rewards
+# NORA-1.5: A Vision-Language-Action Model Trained using World Model- and Action-based Preference Rewards
 
 [![Project Website](https://img.shields.io/badge/Project-Website-blue.svg)](https://declare-lab.github.io/nora-1.5)
 [![Model](https://img.shields.io/badge/Model-NORA--1.5-brightgreen)](https://huggingface.co/declare-lab/nora-1.5)
