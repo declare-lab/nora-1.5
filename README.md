@@ -25,7 +25,7 @@ This repository consolidates the full open-source release of **model checkpoints
 
 ## 🚀 Key Features
 
-- **Vision-Language-Action architecture** with enhanced spatial and semantic grounding  
+- **Vision-Language-Action architecture** with enhanced **task completion rate** and **distraction rate**
 - **Action-based preference optimization** using expert preference rewards  
 - **World-model-based preference learning** for improved planning and consistency  
 - Strong **closed-loop control**, enabling deployment in real robot settings  
