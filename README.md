@@ -8,7 +8,7 @@
 🔥 Project NORA is sponsored by Gemini and Lambda Labs! We are thankful to them.
 
 NORA-1.5 is a **Vision-Language-Action (VLA)** model that improves generalization and real-world decision making through **post-training with world-model-based and action-based preference rewards**.  
-The model builds upon the NORA foundation to achieve stronger **instruction following**, **closed-loop control**, and **real-robot success**, demonstrating reliability across **LeRobot**, **LIBERO**, and **SimplerEnv** environments.
+The model builds upon the NORA foundation to achieve stronger **instruction following**, **closed-loop control**, and **real-robot success**, demonstrating reliability across **LIBERO** and **SimplerEnv** environments.
 
 This repository consolidates the full open-source release of **model checkpoints**, **inference code**, **training code**, and **evaluation tools**, along with documentation and examples.
 
