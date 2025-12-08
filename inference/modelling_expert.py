@@ -1,7 +1,7 @@
 import copy
 import torch.nn.functional as F  # noqa: N812
 import torch
-from typing import Optional,Callable,Dict,Any
+from typing import Optional, Callable, Dict, Any, Union, Type, TypeVar
 from torch import nn
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLAttention,eager_attention_forward
 from transformers.models.qwen2_5_vl.configuration_qwen2_5_vl import Qwen2_5_VLTextConfig
@@ -14,15 +14,21 @@ from transformers import AutoProcessor
 from einops import rearrange
 from qwen_vl_utils import process_vision_info
 import PIL
+import PIL.Image
 import json
 import math
 import numpy as np
-from huggingface_hub import hf_hub_download
+import os
+from pathlib import Path
+from huggingface_hub import hf_hub_download, PyTorchModelHubMixin
 from transformers.modeling_outputs import BaseModelOutputWithPast
+from safetensors.torch import load_file
 
 import tensorflow as tf
 import dlimp as dl
 import PIL.Image as Image
+
+T = TypeVar("T", bound="VLAWithExpert")
 
 def resize_image(image1):
     #np.asarray
@@ -161,6 +167,14 @@ class Qwen2_5_VLMoTAttention(Qwen2_5_VLAttention):
         #query_states, key_states = apply_multimodal_rotary_pos_emb(
         #    query_states, key_states, cos, sin, self.rope_scaling["mrope_section"]
         #)
+        # TODO: CRITICAL WARNING - M-RoPE Mismatch
+        # The VLM keys (past_key_value) have 3D M-RoPE (Multimodal Rotary Positional Embeddings) applied.
+        # The Action queries/keys (below) have standard 1D RoPE applied.
+        # This creates a spatial mismatch when the Action Query tries to attend to the Image Key.
+        # Ideally, we should construct a proper M-RoPE embedding for the action sequence that is compatible 
+        # with the VLM's spatial structure, or project the queries to match.
+        # Currently, this likely degrades the model's ability to attend to specific spatial locations in the image.
+        
         query_states = rearrange(query_states, 'b h s d -> b s h d')
         query_states = apply_rope(query_states,position_ids)
         query_states = rearrange(query_states, 'b s h d -> b h s d')
@@ -312,13 +326,28 @@ class Qwen2_5_VLAExpert(Qwen2_5_VLTextModel):
 
 
 
-class VLAWithExpert(nn.Module):
-    def __init__(self):
+class VLAWithExpert(nn.Module, PyTorchModelHubMixin):
+
+
+
+    _ACTION_TOKEN_MIN = 151665
+    _ACTION_TOKEN_MAX = 153712
+
+
+    def __init__(self,
+    vlm_model_id="declare-lab/nora-long",
+    processor_id="declare-lab/nora",
+    fast_tokenizer_id="physical-intelligence/fast",
+    lm_expert_width_multiplier=0.375,
+    lm_expert_num_attention_head=6,
+    action_chunk_length=5,
+    action_dim=7):
+
         super().__init__()
         
         
         self.vlm  = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            "declare-lab/nora-long",
+            vlm_model_id,
             torch_dtype=torch.bfloat16,
             attn_implementation="sdpa",
         )
@@ -330,21 +359,21 @@ class VLAWithExpert(nn.Module):
 
        
         self.processor = AutoProcessor.from_pretrained(
-                "declare-lab/nora", trust_remote_code=True
+                processor_id, trust_remote_code=True
             )
         self.fast_tokenizer = fast_tokenizer = AutoProcessor.from_pretrained(
-            "physical-intelligence/fast", trust_remote_code=True
+            fast_tokenizer_id, trust_remote_code=True
         )
 
         hidden_size = self.lm_expert_config.hidden_size
         expert_width_multiplier = 0.375
-        self.lm_expert_config.hidden_size = int(hidden_size * expert_width_multiplier)  # hidden_size // 2
-        self.lm_expert_config.intermediate_size = get_intermediate_size(int(hidden_size * expert_width_multiplier))
+        self.lm_expert_config.hidden_size = int(hidden_size * lm_expert_width_multiplier)  # hidden_size // 2
+        self.lm_expert_config.intermediate_size = get_intermediate_size(int(hidden_size * lm_expert_width_multiplier))
         self.lm_expert_config.num_hidden_layers = self.vlm.config.num_hidden_layers
-        self.lm_expert_config.num_attention_heads = 6
+        self.lm_expert_config.num_attention_heads = lm_expert_num_attention_head
 
         self.action_expert = Qwen2_5_VLAExpert._from_config(self.lm_expert_config,torch_dtype=torch.bfloat16)
-        self.action_chunk_length = 5
+        self.action_chunk_length = action_chunk_length
             
         self.device = self.vlm.device
         # Replace the action expert's attention layers
@@ -355,8 +384,8 @@ class VLAWithExpert(nn.Module):
 
 
       
-        self.action_in_proj = nn.Linear(7,self.lm_expert_config.hidden_size)
-        self.action_out_proj = nn.Linear(self.lm_expert_config.hidden_size, 7)
+        self.action_in_proj = nn.Linear(action_dim,self.lm_expert_config.hidden_size)
+        self.action_out_proj = nn.Linear(self.lm_expert_config.hidden_size, action_dim)
         self.action_time_mlp_in = nn.Linear(
             self.lm_expert_config.hidden_size * 2, self.lm_expert_config.hidden_size
         )
@@ -374,17 +403,51 @@ class VLAWithExpert(nn.Module):
         with open(libero_stats, "r") as f:
             self.norm_stats.update(json.load(f))
         
-        model_weights = hf_hub_download(repo_id='declare-lab/nora-1.5', filename="nora2.safetensors")
-        tensors = {}
-        from safetensors import safe_open
-        with safe_open(model_weights, framework="pt") as f:
-            for k in f.keys():
-                tensors[k] = f.get_tensor(k)
-        self.load_state_dict(tensors, strict=False)
+        # NOTE: Weights are now loaded via from_pretrained() or load_state_dict()
+        # The hardcoded loading of nora2.safetensors has been removed to support PyTorchModelHubMixin
         self.to(torch.bfloat16)
-        print("Loaded state dict")
-        del tensors
-        torch.cuda.empty_cache()
+        
+
+    @classmethod
+    def from_pretrained(
+        cls: Type[T],
+        pretrained_model_name_or_path: Union[str, Path],
+        *,
+        force_download: bool = False,
+        token: Optional[Union[str, bool]] = None,
+        cache_dir: Optional[Union[str, Path]] = None,
+        local_files_only: bool = False,
+        revision: Optional[str] = None,
+        **model_kwargs,
+    ) -> T:
+        """
+        Load a pretrained model from a local path or Hugging Face Hub.
+        """
+        model = cls(**model_kwargs)
+        
+        # Determine the path to the weights file
+        if os.path.isdir(pretrained_model_name_or_path):
+            
+            model_file = os.path.join(pretrained_model_name_or_path, "model.safetensors")
+        else:
+            # Try to download model.safetensors
+            model_file = hf_hub_download(
+                repo_id=pretrained_model_name_or_path,
+                filename="model.safetensors",
+                revision=revision,
+                cache_dir=cache_dir,
+                force_download=force_download,
+                token=token,
+                local_files_only=local_files_only,
+            )
+            
+        
+        print(f"Loading weights from {model_file}...")
+        state_dict = load_file(model_file)
+        model.load_state_dict(state_dict, strict=False)
+        model.to(torch.bfloat16)
+        
+        return model
 
 
   
@@ -495,9 +558,78 @@ class VLAWithExpert(nn.Module):
 
         return velocity
 
-   
     @torch.no_grad()
-    def sample_actions(self, image,instruction: dict,num_steps:int = 10,unnorm_key='bridge_orig'):
+    def sample_discrete_actions(self, image,instruction: dict):
+
+
+        
+        
+        if not isinstance(image, PIL.Image.Image):
+            image = PIL.Image.fromarray(image)
+
+
+        image =  resize_image(image) ## IMPORTANT. ENSURE IMAGE RESIZING METHOD IS CONSISTENT WITH PRETRAINIGN 
+               
+        
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "image": image,
+                        "resized_height": 224,
+                        "resized_width": 224,
+                    },
+                    {"type": "text", "text": instruction},
+                ],
+            }
+        ]
+        # Apply chat template to get the text input for the model
+        text = self.processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+
+              
+        image_inputs, video_inputs = process_vision_info(messages)
+
+        
+        inputs = self.processor(
+            text=[text],
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+        )
+        generated_ids = self.model.generate(**inputs)
+
+    
+
+        # --- Extract and Decode Action ---
+        # Find the indices of tokens within the action token range
+       
+        
+        start_idx = (self._ACTION_TOKEN_MIN <= generated_ids[0]) & (generated_ids[0] <= self._ACTION_TOKEN_MAX)
+        start_idx = torch.where(start_idx)[0]
+
+        if len(start_idx) > 0:
+            start_index = start_idx[0].item()
+        else:
+            start_index = None  # or -1 to indicate not found
+
+
+        # Extract the first action token ID
+
+        # Decode the action token using the fast tokenizer
+        # The token ID needs to be map back to the range expected by the fast tokenizer decoder
+
+        
+       
+        output_action = self.fast_tokenizer.decode([generated_ids[0][start_idx] - self._ACTION_TOKEN_MIN])
+        return output_action
+       
+    @torch.no_grad()
+    def sample_actions(self, image,instruction: dict,num_steps:int = 10):
         """
         Adapted from pi0 inference from lerobot repository.
 
@@ -565,7 +697,6 @@ class VLAWithExpert(nn.Module):
 
         
 
-
         vlm_outputs = self.vlm(**inputs)
         vlm_kv_cache = vlm_outputs.past_key_values
        
@@ -613,8 +744,11 @@ class VLAWithExpert(nn.Module):
 
        
         normalized_action = x_t.cpu().float().numpy()
+        ## Return normalized action instead because some people might want to perform unnormalization on their own(eg lerobot unomralizer)
+        return normalized_action
+        
+    def unnormalize_action(self, normalized_action: np.ndarray, unnorm_key: str) -> np.ndarray:
         action_stats = self._get_action_stats(unnorm_key)
-
         mask = action_stats.get("mask", np.ones_like(action_stats["q01"], dtype=bool))
         action_high, action_low = np.array(action_stats["q99"]), np.array(action_stats["q01"])
         actions = np.where(
@@ -622,8 +756,7 @@ class VLAWithExpert(nn.Module):
             0.5 * (normalized_action + 1) * (action_high - action_low) + action_low,
             normalized_action,
         )
-        return {"actions":actions,"normalized_action":normalized_action} ## Returning both actions such that if you need to peform unnormalize on your own.
-    
+        return actions
     def _get_action_stats(self, unnorm_key: str) -> Dict[str, Any]:
         if unnorm_key not in self.norm_stats:
             raise KeyError(
@@ -650,7 +783,7 @@ class VLAWithExpert(nn.Module):
         ## The action expert should be able to attend to the VLM inputs, its own actions BUT NOT FAST TOKENS . ( Prefix + bidirectional attention)
 
         bsz = vlm_inputs['input_ids'].shape[0]
-        vlm_pad_mask = vlm_inputs['expert_attention'].clone()
+        vlm_pad_mask = vlm_inputs.get('expert_attention', vlm_inputs['attention_mask']).clone()
         vlm_attn_mask = vlm_inputs['attention_mask'].clone()
 
         
@@ -674,7 +807,7 @@ class VLAWithExpert(nn.Module):
         time_emb = create_sinusoidal_pos_embedding(
             time,
             self.lm_expert_config.hidden_size,
-            4e-3,
+            4e-3, 
             4.0,
             device=device,
         )
@@ -693,8 +826,6 @@ class VLAWithExpert(nn.Module):
 
         
 
-
-    
         action_pad_mask = torch.ones(bsz,self.action_chunk_length,device=device).bool()
         action_attn_mask = torch.zeros(bsz,self.action_chunk_length,device=device).bool()
 
