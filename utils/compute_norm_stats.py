@@ -58,7 +58,7 @@ class DeltaActions(DataTransformFn):
     
 transform = DeltaActions(mask=[True,True,True,True,True,True,False])
 
-def main(lerobot_dataset_path, output_dir='.', delta_transform=True):
+def main(lerobot_dataset_path, delta_transform=True):
     metadata = LeRobotDatasetMetadata(lerobot_dataset_path)
     
     #path = config.data_root_dir
@@ -88,16 +88,16 @@ def main(lerobot_dataset_path, output_dir='.', delta_transform=True):
 
     #os.makedirs(output_dir, exist_ok=True)
     
-    print(f"Writing stats to: {output_dir}")
-    normalize.save(output_dir, norm_stats)
+    print(f"Writing stats to: {lerobot_dataset_path}")
+    normalize.save(lerobot_dataset_path, norm_stats)
 
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Compute normalization statistics for a LeRobot dataset.")
     parser.add_argument("--dataset_path", type=str, required=True, help="Path to the LeRobot dataset directory.")
-    parser.add_argument("--output_dir", type=str, default=".", help="Directory to save the normalization statistics.")
+    
     parser.add_argument("--delta_transform", action="store_true", help="Apply delta transformation to actions.")
     args = parser.parse_args()
     
-    main(args.dataset_path, output_dir=args.output_dir, delta_transform=args.delta_transform)
+    main(args.dataset_path, delta_transform=args.delta_transform)

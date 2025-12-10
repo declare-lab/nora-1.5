@@ -366,7 +366,7 @@ class VLAWithExpert(nn.Module, PyTorchModelHubMixin):
         )
 
         hidden_size = self.lm_expert_config.hidden_size
-        expert_width_multiplier = 0.375
+        
         self.lm_expert_config.hidden_size = int(hidden_size * lm_expert_width_multiplier)  # hidden_size // 2
         self.lm_expert_config.intermediate_size = get_intermediate_size(int(hidden_size * lm_expert_width_multiplier))
         self.lm_expert_config.num_hidden_layers = self.vlm.config.num_hidden_layers
@@ -404,7 +404,7 @@ class VLAWithExpert(nn.Module, PyTorchModelHubMixin):
             self.norm_stats.update(json.load(f))
         
         # NOTE: Weights are now loaded via from_pretrained() or load_state_dict()
-        # The hardcoded loading of nora2.safetensors has been removed to support PyTorchModelHubMixin
+        
         self.to(torch.bfloat16)
         
 
@@ -685,7 +685,7 @@ class VLAWithExpert(nn.Module, PyTorchModelHubMixin):
             return_tensors="pt",
         )
         
-        # Move inputs to GPU
+       
        
         inputs = {k: v.to(device) for k, v in inputs.items()}
 

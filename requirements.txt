@@ -11,5 +11,6 @@ wandb
 scipy
 pillow
 safetensors
+lerobot==0.3.3
+numpydantic
 numpy==1.26.4
-lerobot==0.4.0

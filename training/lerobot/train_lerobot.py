@@ -2,6 +2,10 @@ import os
 import json
 import logging
 from pathlib import Path
+
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+
 from typing import List, Dict, Any, Callable, Optional
 
 import torch
@@ -64,7 +68,7 @@ class DeltaActions(DataTransformFn):
         if "action" not in data or self.mask is None:
             return data
 
-        state, actions = data["observation_state"], data["action"]
+        state, actions = data["observation.state"], data["action"]
         mask = np.asarray(self.mask)
         dims = mask.shape[-1]
         #print(dims)
@@ -78,7 +82,7 @@ transform = DeltaActions(mask=[True,True,True,True,True,True,False])
 
 
 
-# os.environ["WANDB_API_KEY"] = '...' # Set via environment variable
+
 # --- 1. Configuration ---
 class TrainingConfig:
     def __init__(
@@ -91,7 +95,7 @@ class TrainingConfig:
         output_dir: str = './checkpoints',
         resume_from_checkpoint: str = '',
         load_model_weights: Optional[str] = None,
-        data_root_dir: str = 'lerobot',
+        data_root_dir: str = '/home/ubuntu/poria-cvpr-2026/chiayu/nora_multi_task_lerobot_new_1104_old',
         wandb_project_name: str = "Nora-1.5 Lerobot",
         checkpoint_save_frequency: int = 2000,
         logging_frequency: int = 50,
@@ -162,11 +166,11 @@ def process_example(example: Dict[str, Any], fast_tokenizer: AutoProcessor) -> D
     normalized_action = example['action']
 
     
-    image1 = resize_image(example['image'])
+    image1 = resize_image(example['observation.images.scene'])
     
     
     
-    lang =  example['lang']
+    task =  example['lang']
     
     
     fast_tokens = fast_tokenizer(normalized_action)
@@ -182,7 +186,7 @@ def process_example(example: Dict[str, Any], fast_tokenizer: AutoProcessor) -> D
                     "resized_height": 224,
                     "resized_width": 224,
                 },
-                {"type": "text", "text": lang},
+                {"type": "text", "text": task},
 
             ],
         },
@@ -295,12 +299,14 @@ def train(config: TrainingConfig):
         norm_map = {
             'action': NormalizationMode.MIN_MAX,
         }
-       
-        with open(os.path.join(config.data_root_dir, 'norm_stats.json'),'r') as f:
-            new_stats = json.load(f)['norm_stats']
+        try:
+            with open(os.path.join(config.data_root_dir, 'norm_stats.json'),'r') as f:
+                new_stats = json.load(f)['norm_stats']
+        except:
+            raise ValueError("Normalization stats norm_stats.json not found. Please run compute_norm_stats.py first.")
             
-        stats['action']['min'] = np.array(new_stats['actions']['q01'])
-        stats['action']['max'] = np.array(new_stats['actions']['q99'])
+        stats['action']['min'] = np.array(new_stats['action']['q01'])
+        stats['action']['max'] = np.array(new_stats['action']['q99'])
         normalizer = Normalize(features, norm_map, stats)
 
     # Create DataLoader
@@ -368,7 +374,7 @@ def train(config: TrainingConfig):
                 output = model(batch,actions,alpha=10.0) ## alpha is the scale between cross entropy loss and flow matching loss
                
     
-                loss = output['expert_loss']
+                loss = output['combined_loss']
                 accelerator.backward(loss)
 
                 
