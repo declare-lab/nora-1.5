@@ -167,14 +167,7 @@ class Qwen2_5_VLMoTAttention(Qwen2_5_VLAttention):
         #query_states, key_states = apply_multimodal_rotary_pos_emb(
         #    query_states, key_states, cos, sin, self.rope_scaling["mrope_section"]
         #)
-        # TODO: CRITICAL WARNING - M-RoPE Mismatch
-        # The VLM keys (past_key_value) have 3D M-RoPE (Multimodal Rotary Positional Embeddings) applied.
-        # The Action queries/keys (below) have standard 1D RoPE applied.
-        # This creates a spatial mismatch when the Action Query tries to attend to the Image Key.
-        # Ideally, we should construct a proper M-RoPE embedding for the action sequence that is compatible 
-        # with the VLM's spatial structure, or project the queries to match.
-        # Currently, this likely degrades the model's ability to attend to specific spatial locations in the image.
-        
+       
         query_states = rearrange(query_states, 'b h s d -> b s h d')
         query_states = apply_rope(query_states,position_ids)
         query_states = rearrange(query_states, 'b s h d -> b h s d')
@@ -348,7 +341,7 @@ class VLAWithExpert(nn.Module, PyTorchModelHubMixin):
         
         self.vlm  = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             vlm_model_id,
-            torch_dtype=torch.bfloat16,
+#             torch_dtype=torch.bfloat16,
             attn_implementation="sdpa",
         )
         
@@ -372,7 +365,7 @@ class VLAWithExpert(nn.Module, PyTorchModelHubMixin):
         self.lm_expert_config.num_hidden_layers = self.vlm.config.num_hidden_layers
         self.lm_expert_config.num_attention_heads = lm_expert_num_attention_head
 
-        self.action_expert = Qwen2_5_VLAExpert._from_config(self.lm_expert_config,torch_dtype=torch.bfloat16)
+        self.action_expert = Qwen2_5_VLAExpert._from_config(self.lm_expert_config)
         self.action_chunk_length = action_chunk_length
             
         self.device = self.vlm.device
@@ -380,7 +373,7 @@ class VLAWithExpert(nn.Module, PyTorchModelHubMixin):
         
         self._replace_action_expert_attention()
         self.action_expert.embed_tokens = None
-        self.vlm_kv_cache = None
+       
 
 
       
@@ -403,9 +396,6 @@ class VLAWithExpert(nn.Module, PyTorchModelHubMixin):
         with open(libero_stats, "r") as f:
             self.norm_stats.update(json.load(f))
         
-        # NOTE: Weights are now loaded via from_pretrained() or load_state_dict()
-        
-        self.to(torch.bfloat16)
         
 
     @classmethod
@@ -445,7 +435,6 @@ class VLAWithExpert(nn.Module, PyTorchModelHubMixin):
         print(f"Loading weights from {model_file}...")
         state_dict = load_file(model_file)
         model.load_state_dict(state_dict, strict=False)
-        model.to(torch.bfloat16)
         
         return model
 
@@ -506,7 +495,7 @@ class VLAWithExpert(nn.Module, PyTorchModelHubMixin):
                                         Shape: (batch_size, vlm_seq_len).
 
         Returns:
-            torch.Tensor: The predicted noise `u_t` (epsilon).
+            torch.Tensor: The predicted velocity 
                         Shape: (batch_size, action_chunk_length, action_dim).
         """
         device = x_t.device
@@ -634,16 +623,18 @@ class VLAWithExpert(nn.Module, PyTorchModelHubMixin):
         Adapted from pi0 inference from lerobot repository.
 
         Args:
-            self: The instance of the model class.
+
             image: PIL.Image
             instruction: Instruction to the VLA
             num_steps: Flow matching steps to sample from. We kept it as 10.
             
 
         Returns:
-            Dictionary: Containing normalized and unormalized action tensor.
-                    {"actions":actions,"normalized_action":normalized_action}.
+            normalized_action: np.ndarray
+                   
         """
+
+        ## Didnt test for batch size >1
         
         device = self.vlm.device
         
@@ -705,7 +696,7 @@ class VLAWithExpert(nn.Module, PyTorchModelHubMixin):
    
 
         actions_shape = (bsz, self.action_chunk_length, 7)
-        x_t = self.sample_noise(actions_shape, device=device,dtype=self.vlm.dtype)
+        x_t = self.sample_noise(actions_shape, device=device)
 
 
        
@@ -743,7 +734,7 @@ class VLAWithExpert(nn.Module, PyTorchModelHubMixin):
                 time += dt
 
        
-        normalized_action = x_t.cpu().float().numpy()
+        normalized_action = x_t.cpu().float().numpy() ## (1,action_chunk_length, action_dim)
         ## Return normalized action instead because some people might want to perform unnormalization on their own(eg lerobot unomralizer)
         return normalized_action
         
@@ -771,25 +762,25 @@ class VLAWithExpert(nn.Module, PyTorchModelHubMixin):
         
             
         
-        ## Let the Qwen2_5 vlm settle its own attention mask. 
+        
         device = self.vlm.device
         vlm_outputs = self.vlm(
                 **vlm_inputs,
                 use_cache=True
             )
-        self.vlm_kv_cache = vlm_outputs.past_key_values
+        vlm_kv_cache = vlm_outputs.past_key_values
 
         ## Construct attention mask for the action expert.
         ## The action expert should be able to attend to the VLM inputs, its own actions BUT NOT FAST TOKENS . ( Prefix + bidirectional attention)
 
         bsz = vlm_inputs['input_ids'].shape[0]
-        vlm_pad_mask = vlm_inputs.get('expert_attention', vlm_inputs['attention_mask']).clone()
+        vlm_pad_mask = vlm_inputs['expert_attention'].clone()
         vlm_attn_mask = vlm_inputs['attention_mask'].clone()
 
         
         
         actions = actions.to(self.vlm.dtype)
-        noise = self.sample_noise(actions.shape, actions.device,dtype=actions.dtype)
+        noise = self.sample_noise(actions.shape, actions.device)
 
         
         time = self.sample_time(actions.shape[0], actions.device,dtype=actions.dtype)
@@ -822,7 +813,8 @@ class VLAWithExpert(nn.Module, PyTorchModelHubMixin):
         action_time_emb = self.action_time_mlp_in(action_time_emb) ## simple linear layer to project back to hidden size dim
         action_time_emb = F.silu(action_time_emb)  # swish == silu
         action_time_emb = self.action_time_mlp_out(action_time_emb) ## 
-
+        
+        ## If you want to train with state, it is possible to initialize a new state projection layer and fuse with the action_time_emb here. Note that in pretraining, we dont use state
 
         
 
@@ -840,9 +832,9 @@ class VLAWithExpert(nn.Module, PyTorchModelHubMixin):
         expert_output = self.action_expert(inputs_embeds=action_time_emb,
                                     expert_attention_mask=expert_attention_mask.unsqueeze(1).bool(),
                                     position_ids= position_ids,
-                                    vlm_key_values=self.vlm_kv_cache, 
+                                    vlm_key_values=vlm_kv_cache, 
                                     use_cache=True)
-        action_out = self.action_out_proj(expert_output.last_hidden_state)
+        action_out = self.action_out_proj(expert_output.last_hidden_state.to(torch.float32)) ## upcast to flaot32 following openpi
         expert_loss = alpha*F.mse_loss(action_out, u_t, reduction='mean')
         
         loss = expert_loss+ vlm_outputs.loss

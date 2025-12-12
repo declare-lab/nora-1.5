@@ -11,7 +11,7 @@ import tqdm
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata 
 import normalize as normalize
 from torch.utils.data import DataLoader
-
+from huggingface_hub import HfApi
 from typing import Sequence,runtime_checkable,Protocol
 import dataclasses
 
@@ -47,7 +47,7 @@ class DeltaActions(DataTransformFn):
         if "action" not in data or self.mask is None:
             return data
 
-        state, actions = data["observation_state"], data["action"]
+        state, actions = data[REMAP_KEY['state']], data["action"]
         mask = np.asarray(self.mask)
         dims = mask.shape[-1]
         #print(dims)
@@ -78,6 +78,7 @@ def main(lerobot_dataset_path, delta_transform=True):
     #num_batches = len(data_loader)//32
     
     for batch in tqdm.tqdm(data_loader, total=len(data_loader), desc="Computing stats"):
+        
         for key in keys:
             if delta_transform:
                 batch = transform(batch)
@@ -87,9 +88,20 @@ def main(lerobot_dataset_path, delta_transform=True):
     norm_stats = {key: stats.get_statistics() for key, stats in stats.items()}
 
     #os.makedirs(output_dir, exist_ok=True)
-    
-    print(f"Writing stats to: {lerobot_dataset_path}")
-    normalize.save(lerobot_dataset_path, norm_stats)
+    if os.path.exists(lerobot_dataset_path):
+        print(f"Writing stats to: {lerobot_dataset_path}")
+        normalize.save(lerobot_dataset_path, norm_stats)
+    else:
+        normalize.save('./', norm_stats) ## save to current dir
+        api = HfApi()
+        #norm_stats = normalize.serialize_json(norm_stats)
+        api.upload_file(
+            path_or_fileobj='./norm_stats.json',
+            path_in_repo='norm_stats.json', # This is the target file path in the repo
+            repo_id=lerobot_dataset_path,
+            repo_type="dataset", # Specify 'dataset' repo type
+           # commit_message=f"Compute and upload normalization statistics for {stats_filename}",
+        )
 
 
 if __name__ == "__main__":

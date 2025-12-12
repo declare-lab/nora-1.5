@@ -17,12 +17,10 @@ from accelerate.utils import set_seed
 from transformers import AutoProcessor, PreTrainedTokenizerBase, Qwen2_5_VLForConditionalGeneration
 from transformers import SchedulerType, get_scheduler
 from qwen_vl_utils import process_vision_info
-import math
 import numpy as np
 from tqdm import tqdm
 import wandb
 from inference.modelling_expert import VLAWithExpert
-
 logger = get_logger(__name__)
 import os
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
@@ -31,10 +29,17 @@ from lerobot.policies.normalize import (
     Normalize,
    
 )
-
-
 from typing import Sequence,runtime_checkable,Protocol
 import dataclasses
+
+set_seed(42)
+## MODIFY THESE BASE ON YOUR LEROBOT DATASET
+REMAP_KEY = {
+    "state": "observation_state",
+    "image": "observation.images.scene",
+    "task":"task",
+
+}
 
 
 '''
@@ -68,7 +73,7 @@ class DeltaActions(DataTransformFn):
         if "action" not in data or self.mask is None:
             return data
 
-        state, actions = data["observation.state"], data["action"]
+        state, actions = data[REMAP_KEY['state']], data['action'] ## You might need modify key here depending on your state/action 
         mask = np.asarray(self.mask)
         dims = mask.shape[-1]
         #print(dims)
@@ -87,20 +92,20 @@ transform = DeltaActions(mask=[True,True,True,True,True,True,False])
 class TrainingConfig:
     def __init__(
         self,
-        per_device_batch_size: int = 8,
+        per_device_batch_size: int = 24,
         learning_rate: float = 8e-5,
         gradient_accumulation_steps: int = 1,
-        num_warmup_steps: int = 1500,
-        max_train_steps: int = 30000,
+        num_warmup_steps: int = 1000,
+        max_train_steps: int = 10000,
         output_dir: str = './checkpoints',
         resume_from_checkpoint: str = '',
         load_model_weights: Optional[str] = None,
-        data_root_dir: str = '/home/ubuntu/poria-cvpr-2026/chiayu/nora_multi_task_lerobot_new_1104_old',
+        data_root_dir: str = 'hungchiayu/lerobot_multi_task_1104',
         wandb_project_name: str = "Nora-1.5 Lerobot",
         checkpoint_save_frequency: int = 2000,
         logging_frequency: int = 50,
         delta_transform: bool = True,
-        gradient_clipping: Optional[float] = None, # Add gradient clipping option
+        gradient_clipping: Optional[float] = 1.0, # Add gradient clipping option
     ):
         self.per_device_batch_size = per_device_batch_size
         self.learning_rate = learning_rate
@@ -118,15 +123,15 @@ class TrainingConfig:
         self.gradient_clipping = gradient_clipping
 
 # --- 2. Data Loading and Preprocessing ---
-def load_and_prepare_dataset(config: TrainingConfig, processor: AutoProcessor, is_train: bool = True): 
+def load_and_prepare_dataset(config: TrainingConfig, processor: AutoProcessor): 
     """Loads and prepares the Lerobot dataset."""
-    from lerobot.datasets.lerobot_dataset import MultiLeRobotDataset,LeRobotDataset
+    
     
     metadata = LeRobotDatasetMetadata(config.data_root_dir)
     
     path = config.data_root_dir
     delta_timestamps = {
-        "action": [t / metadata.fps for t in range(5)],
+        "action": [t / metadata.fps for t in range(5)], ## action horizon of 5
     }
     ds = LeRobotDataset(path,delta_timestamps=delta_timestamps)
     return ds,metadata
@@ -148,6 +153,8 @@ import tensorflow as tf
 from PIL import Image
 import dlimp as dl
 
+
+## IMPORTANT. THIS IS THE IMAGE RESIZING FUNCTION FOR PRETRAINING.
 def resize_image(image1):
 
 
@@ -166,17 +173,29 @@ def process_example(example: Dict[str, Any], fast_tokenizer: AutoProcessor) -> D
     normalized_action = example['action']
 
     
-    image1 = resize_image(example['observation.images.scene'])
+    image1 = resize_image(example[REMAP_KEY['image']])
     
     
     
-    task =  example['lang']
+    task =  example[REMAP_KEY['task']]
     
     
     fast_tokens = fast_tokenizer(normalized_action)
     
     vlm_action = map_fast_token_to_vlm_action(fast_tokens[0])
-    ## If you want to finetune to take in multiple image, you will have to modify the message templlate below
+    ## If you want to finetune to take in multiple image, you will have to modify the message templlate below.
+
+    ## Eg  "content": [
+   #             {
+    #                "type": "image", "image": image1,
+     #               "resized_height": 224,
+     #               "resized_width": 224,
+     #           },
+     #             {
+    #                "type": "image", "image": image2,
+     #               "resized_height": 224,
+     #               "resized_width": 224,
+     #           }],
     messages = [
         {
             "role": "user",
@@ -236,7 +255,7 @@ def collate_fn(examples,processor,fast_tokenizer,normalizer):
                 seq[:first_action_index] = -100
                
 
-                ## A hacky way to construct action expert attention mask. We can treat fast tokens as padded tokens (0) when constructing attention mask via the make_attn_2d function. 
+                ## A hacky way to construct action expert attention mask. We can treat fast tokens as padded tokens (0) when constructing attention mask for action expert via the make_attn_2d function. 
                 # This way the action expert cant attend to fast action tokens
                 expert_attention_mask[i, first_action_index:] = 0
 
@@ -253,7 +272,7 @@ def collate_fn(examples,processor,fast_tokenizer,normalizer):
         return batch_input
 
 # --- 3. Model Initialization ---
-def load_model_and_processor(config: TrainingConfig, accelerator: Accelerator):
+def load_model_and_processor( accelerator: Accelerator):
     """Loads the model and processor."""
     processor = AutoProcessor.from_pretrained('declare-lab/nora')
     processor.tokenizer.padding_side = 'left'
@@ -284,11 +303,11 @@ def train(config: TrainingConfig):
         wandb.init(project=config.wandb_project_name)
 
     # Load model and processor
-    model, processor, fast_tokenizer  = load_model_and_processor(config, accelerator)
+    model, processor, fast_tokenizer  = load_model_and_processor(accelerator)
 
     # Load and prepare dataset
     with accelerator.main_process_first():
-        train_dataset,metadata = load_and_prepare_dataset(config, processor, is_train=True)
+        train_dataset,metadata = load_and_prepare_dataset(config, processor)
         
         stats = metadata.stats
        
@@ -299,9 +318,20 @@ def train(config: TrainingConfig):
         norm_map = {
             'action': NormalizationMode.MIN_MAX,
         }
+
+        ## If you do not want to train with delta action but with absolute end effector pose, please comment out  line 317 to 334
         try:
-            with open(os.path.join(config.data_root_dir, 'norm_stats.json'),'r') as f:
-                new_stats = json.load(f)['norm_stats']
+            if os.path.exists(config.data_root_dir):
+                ## try to load from local dir
+                with open(os.path.join(config.data_root_dir, 'norm_stats.json'),'r') as f:
+                    new_stats = json.load(f)['norm_stats']
+            else:
+                ## load from hf hub 
+                from huggingface_hub import hf_hub_download
+                stats_file_path = hf_hub_download(repo_id=config.data_root_dir, filename='norm_stats.json', repo_type='dataset')
+                with open(stats_file_path,'r') as f:
+                    new_stats = json.load(f)['norm_stats']
+                
         except:
             raise ValueError("Normalization stats norm_stats.json not found. Please run compute_norm_stats.py first.")
             
