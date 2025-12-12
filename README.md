@@ -117,6 +117,17 @@ We jointly optimize cross entropy loss(on FAST token) and flow matching loss on 
 ## SimplerEnv evaluation
 Navigate to  https://github.com/hungchiayu1/SimplerEnv-OpenVLA
 
+## LIBERO Evaluation
+We used [OpenVLA's](https://github.com/openvla/openvla) code base to perform LIBERO evaluation. To perform LIBERO evaluation, follow the instruction in OpenVLA and set up the evaluation accordingly. 
+
+Copy the inference folder to openvla/experiments/robot/libero and modify the inference function of run_libero_eval.py in OpenVLA's codebase.
+
+```python
+from inference.modelling_expert import VLAWithExpert
+
+model = VLAWithExpert.from_pretrained("declare-lab/nora-1.5-libero") 
+outputs = model.sample_actions(PIL IMAGE,instruction,num_steps=10) ## Outputs 7 Dof action of normalized action
+```
 
 ## Acknowledgement
 This repository is built based on [OpenVLA](https://github.com/openvla/openvla), [Open X-Embodiment](https://github.com/google-deepmind/open_x_embodiment?tab=readme-ov-file),[transformers](https://github.com/huggingface/transformers), [accelerate](https://github.com/huggingface/accelerate), [Qwen2.5 VL](https://github.com/QwenLM/Qwen2.5-VL), [Lerobot](https://github.com/huggingface/lerobot), [SpatialVLA](https://github.com/SpatialVLA/SpatialVLA).  Thanks!
