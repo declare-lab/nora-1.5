@@ -102,7 +102,7 @@ We jointly optimize cross entropy loss(on FAST token) and flow matching loss on 
      <td>Pretrained on OXE. Jointly optimize cross entropy loss and flow matching loss</a></td>
   </tr>
   <tr>
-    <td><a href=https://huggingface.co/declare-lab/nora-1.5-fractal-dpo">declare-lab/nora-1.5-fractal-dpo</a></td>
+    <td><a href="https://huggingface.co/declare-lab/nora-1.5-fractal-dpo">declare-lab/nora-1.5-fractal-dpo</a></td>
     <td>declare-lab/nora-1.5</td>
     <td>Finetuned on fractal and perform DPO via the method detailed in the paper</a></td>
   </tr>
