@@ -1,13 +1,13 @@
-Post-Training: Generate Synthethic Data → Construct Synthethic Data via VJEPA-AC → DPO
+Post-Training: Generate Synthethic Data → Rollout via VJEPA-AC → DPO
 ===================================
 
-This folder contains utilities for post-training processing: generate synthetic trajectories, label them, and run Direct Preference Optimization (DPO) training on the labeled set.
+This folder contains utilities for post-training processing: generate synthetic trajectories, peform rollout using vjepa2-ac , and run Direct DPO on the labelled set.
 
 Overview
 --------
 - Step 1 — Generate data: run `generate_data.py` to produce synthetic trajectory datasets.
 - Step 2 — Label data: run `label_generated_data.py` to convert raw generated data into a labeled dataset suitable for training.
-- Step 3 — DPO training: run `train_dpo_nora.py` (or `modelling_expert_with_dpo.py`) to train a reward / policy model using DPO on the labeled dataset.
+- Step 3 — DPO training: run `train_dpo_nora.py` (or `modelling_expert_with_dpo.py`).
 
 Prerequisites
 -------------
@@ -48,7 +48,9 @@ Quick run examples
 
 Our dataset structure uses the same RLDS format used by OpenVLA training. You can check more details in the [OpenVLA](https://github.com/openvla/openvla) repository.
 You will have to download the RLDS dataset for the dataset you are interested in generating (Eg LIBERO,Fractal). Pass in the RLDS data dir in ```data_root_dir``` argument.
+
 This script will sample a random data point (instruction,image) from the dataset and generate 5 actions by the policy and save the goal image (last frame).
+
 1) Generate data (adjust args for your robot/task):
 
 ```python
