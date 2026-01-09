@@ -127,7 +127,7 @@ def train(config: VJEPATrainingConfig):
     )
     
     train_dataset = RLDSDataset(
-                data_root_dir=Path(config.),
+                data_root_dir=Path(config.rlds_data_root_dir),
                 data_mix="libero_combined_no_noops",
                 batch_transform=RLDSBatchTransform(),
                 resize_resolution=(256, 256),
