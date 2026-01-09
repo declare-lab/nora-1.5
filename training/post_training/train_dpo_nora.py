@@ -27,9 +27,6 @@ import os
 from datasets import load_from_disk
 
 
-os.environ["WANDB_API_KEY"] = '1b052aa56cdd07067ba6243f3b4f6559c6dca336'
-
-
 class TrainingConfig:
     def __init__(
         self,
