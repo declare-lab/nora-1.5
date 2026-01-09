@@ -87,7 +87,8 @@ Run training with accelerate launch --config_file='config.yaml' training/lerobot
 
 
 We jointly optimize cross entropy loss(on FAST token) and flow matching loss on action expert, hence we can use sample discrete action via FAST tokenizer, or continous action via flow matching (action expert). Base on our experiment on Galaxea A1, we found that discrete action performs better than continous action. However, in simulation such as SimplerEnv and LIBERO, continous action outpeform discrete action. Feel free to try both action sampling method.
-
+## Post-training
+Navigate to [training/post_training](https://github.com/declare-lab/nora-1.5/tree/main/training/post_training)
 ## 🤗 Model Zoo
 
 <table>
@@ -143,3 +144,6 @@ This repository is built based on [OpenVLA](https://github.com/openvla/openvla),
   year={2025}
 }
 ```
+
+## Questions
+Please email me at chiayu001 at e.ntu.edu.sg
