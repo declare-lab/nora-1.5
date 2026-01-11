@@ -232,7 +232,7 @@ def train(config: VJEPATrainingConfig):
             clips, actions = batch['clips'],batch['actions'][:,:-1,:]
             #accelerator.log("CLIPS SHAPE",clips.shape,actions.shape,states.shape)
             with accelerator.accumulate(predictor):
-                
+                optimizer.zero_grad()
 
                 h = forward_target(clips)
                 # The predictor uses the target encoder's representations as input context
